@@ -11,7 +11,7 @@ param (
 $ErrorActionPreference = "Stop"
 
 # Support pipeline input
-if ($null -eq $rootdir) {
+if (!$rootdir) {
     $Dirs = @($input)
 }
 else {
@@ -74,6 +74,10 @@ try {
 
             if ("HEVC" -ne $video_track.Format) {
                 Write-Host "[$id] Not a HEVC file. Found: $($video_track.Format)."
+                return
+            }
+            elseif (!$video_track.HDR_Format) {
+                Write-Host "[$id] Not a HDR file."
                 return
             }
 
@@ -177,7 +181,7 @@ try {
             Write-Host "[$id] Fin."
         }
         catch {
-            throw "[id] $_"
+            throw "[$id] $_"
         }
         finally {
             Get-Job | Stop-Job
