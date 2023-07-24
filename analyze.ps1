@@ -15,7 +15,7 @@ if (!$rootdir) {
     $Dirs = @($input)
 }
 else {
-    $Dirs = Get-ChildItem -Path "Z:\Movies" -Filter "*.mkv" -Recurse
+    $Dirs = Get-ChildItem -Path $rootdir -Filter "*.mkv" -Recurse
 }
 
 $origin = @{}
