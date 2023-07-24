@@ -6,7 +6,8 @@
 
 param (
     [String[]]$RootDir,
-    [String]$MetadataDir
+    [String]$MetadataDir,
+    [String]$TempDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,9 @@ else {
 }
 
 New-Item -ItemType Directory -Force -Path $MetadataDir | Out-Null
+if ($TempDir) {
+    New-Item -ItemType Directory -Force -Path $TempDir | Out-Null
+}
 
 $origin = @{}
 $dirs | Foreach-Object { $origin.($_.GetHashCode()) = @{} }
@@ -76,7 +80,7 @@ try {
                 return
             }
 
-            $tmp_dir = New-TemporaryDirectory -Path "D:/temp"
+            $tmp_dir = New-TemporaryDirectory -Path $using:TempDir
 
             $process.Status = "(1/6) Load metadata from BL"
             $process.PercentComplete = -1
