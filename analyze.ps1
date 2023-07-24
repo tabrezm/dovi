@@ -65,6 +65,14 @@ try {
             $process.Id = $id
             $process.Activity = $_.BaseName
 
+            $plot_png = (Join-Path $_.Directory $_.BaseName) + ".plot.png"
+            $master_json = (Join-Path $_.Directory $_.BaseName) + ".master.json"
+            if ((Test-Path $plot_png) -and (Test-Path $master_json)) {
+                Write-Host "[$id] Plot and mastering metadata exists. Skipping..."
+                $process.Completed = $true
+                return
+            }
+
             $tmp_dir = New-TemporaryDirectory -Path "D:/temp"
 
             $process.Status = "(1/6) Load metadata from BL"
@@ -74,10 +82,12 @@ try {
 
             if ("HEVC" -ne $video_track.Format) {
                 Write-Host "[$id] Not a HEVC file. Found: $($video_track.Format)."
+                $process.Completed = $true
                 return
             }
             elseif (!$video_track.HDR_Format) {
                 Write-Host "[$id] Not a HDR file."
+                $process.Completed = $true
                 return
             }
 
@@ -135,7 +145,7 @@ try {
 
                 $process.Status = "(4/6) Generate plot from DV8 RPU"
                 $process.PercentComplete = -1
-                & .\dovi_tool plot "$tmp_dir/DV8.RPU.bin" -o ((Join-Path $_.Directory $_.BaseName) + ".plot.png") | Out-Null
+                & .\dovi_tool plot "$tmp_dir/DV8.RPU.bin" -o $plot_png | Out-Null
 
                 $process.Status = "(5/6) Load mastering data from RPU"
                 $process.PercentComplete = -1
@@ -174,7 +184,7 @@ try {
                 BL   = $BL_data
                 RPU  = $RPU_data
             } | ConvertTo-Json
-            $BL_RPU_data | Set-Content ((Join-Path $_.Directory $_.BaseName) + ".master.json")
+            $BL_RPU_data | Set-Content $master_json
 
             $process.Completed = $true
 
@@ -191,7 +201,7 @@ try {
 
     while ($job.State -eq 'Running') {
         $sync.Keys | Foreach-Object {
-            if ($sync.$_.keys -and $sync.$_.keys -ne "") {
+            if ($sync.$_.keys -and ($sync.$_.keys -ne "")) {
                 $param = $sync.$_
                 Write-Progress @param
             }
