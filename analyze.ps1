@@ -1,29 +1,32 @@
 # Extract mastering metadata and generate plots
 #
 # Usage:
-#   $ .\analyze.ps1 "Z:\Movies"
-#   $ gci -Path "Z:\Movies" -Filter "*.mkv" -Recurse | .\analyze.ps1
+#   $ .\analyze.ps1 Z:\Movies Z:\Movies\metadata
+#   $ gci -Path "Z:\Movies" -Filter "*.mkv" -Recurse | .\analyze.ps1 -MetadataDir Z:\Movies\metadata
 
 param (
-    [String[]]$rootdir
+    [String[]]$RootDir,
+    [String]$MetadataDir
 )
 
 $ErrorActionPreference = "Stop"
 
 # Support pipeline input
-if (!$rootdir) {
-    $Dirs = @($input)
+if (!$RootDir) {
+    $dirs = @($input)
 }
 else {
-    $Dirs = Get-ChildItem -Path $rootdir -Filter "*.mkv" -Recurse
+    $dirs = Get-ChildItem -Path $RootDir -Filter "*.mkv" -Recurse
 }
 
+New-Item -ItemType Directory -Force -Path $MetadataDir | Out-Null
+
 $origin = @{}
-$Dirs | Foreach-Object { $origin.($_.GetHashCode()) = @{} }
+$dirs | Foreach-Object { $origin.($_.GetHashCode()) = @{} }
 $sync = [System.Collections.Hashtable]::Synchronized($origin)
 
 try {
-    $job = $Dirs | Foreach-Object -AsJob -Parallel {
+    $job = $dirs | Foreach-Object -AsJob -Parallel {
         function New-TemporaryDirectory {
             param (
                 $Path
@@ -65,8 +68,8 @@ try {
             $process.Id = $id
             $process.Activity = $_.BaseName
 
-            $plot_png = (Join-Path $_.Directory $_.BaseName) + ".plot.png"
-            $master_json = (Join-Path $_.Directory $_.BaseName) + ".master.json"
+            $plot_png = (Join-Path $using:MetadataDir $_.BaseName) + ".plot.png"
+            $master_json = (Join-Path $using:MetadataDir $_.BaseName) + ".master.json"
             if ((Test-Path $plot_png) -and (Test-Path $master_json)) {
                 Write-Host "[$id] Plot and mastering metadata exists. Skipping..."
                 $process.Completed = $true
