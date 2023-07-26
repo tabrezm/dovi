@@ -7,7 +7,8 @@
 param (
     [String[]]$RootDir,
     [String]$MetadataDir,
-    [String]$TempDir
+    [String]$TempDir,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,7 +75,7 @@ try {
 
             $plot_png = (Join-Path $using:MetadataDir $_.BaseName) + ".plot.png"
             $master_json = (Join-Path $using:MetadataDir $_.BaseName) + ".master.json"
-            if ((Test-Path $plot_png) -and (Test-Path $master_json)) {
+            if (!$using:Force.IsPresent -and ((Test-Path $plot_png) -and (Test-Path $master_json))) {
                 Write-Host "[$id] Plot and mastering metadata exists. Skipping..."
                 $process.Completed = $true
                 return
@@ -118,19 +119,27 @@ try {
             ($BL_data.GetEnumerator() | Where-Object { -not $_.Value }) | ForEach-Object { $BL_data.Remove($_.Name) }
 
             if ($BL_data.HDR_Format -like "Dolby Vision*") {
-                $process.Status = "(2/6) Extract DV8 BL+RPU"
-                $job = Start-ThreadJob -ScriptBlock {
-                    param ($source, $out) & mkvextract.exe $source tracks 0:$out
-                } -ArgumentList $_, "$tmp_dir/DV8.BL_RPU.hevc"
-                $pc_pattern = "^Progress: (\d+)%"
-                while (($job | Get-Job).State -in 'NotStarted', 'Running') {
-                    $results = Receive-Job $job
-                    if ($results -match $pc_pattern) {
-                        $pc = ($results | Select-String -Pattern $pc_pattern).Matches.Groups[1].Value
-                        $process.Status = "(2/6) Extract DV8 BL+RPU ($pc%)"
-                        $process.PercentComplete = $pc
+                # limit sequential reads since multiple, parallel, sequential reads is effectively random reads
+                $semaphore = New-Object Threading.Semaphore(2, 2, "SmbReaderSemaphore")
+                try {
+                    $process.Status = "(2/6) Extract DV8 BL+RPU"
+                    $semaphore.WaitOne()
+                    $job = Start-ThreadJob -ScriptBlock {
+                        param ($source, $out) & mkvextract.exe $source tracks 0:$out
+                    } -ArgumentList $_, "$tmp_dir/DV8.BL_RPU.hevc"
+                    $pc_pattern = "^Progress: (\d+)%"
+                    while (($job | Get-Job).State -in 'NotStarted', 'Running') {
+                        $results = Receive-Job $job
+                        if ($results -match $pc_pattern) {
+                            $pc = ($results | Select-String -Pattern $pc_pattern).Matches.Groups[1].Value
+                            $process.Status = "(2/6) Extract DV8 BL+RPU ($pc%)"
+                            $process.PercentComplete = $pc
+                        }
+                        Start-Sleep -Seconds 1
                     }
-                    Start-Sleep -Seconds 1
+                }
+                finally {
+                    $semaphore.Release()
                 }
 
                 # TODO: use pseudoconsole instead of wsl + unbuffer
@@ -158,29 +167,53 @@ try {
                 $process.PercentComplete = -1
                 $info = [ordered]@{}
                 # ignore "Parsing RPU file...", newline, and "Summary:"
-                & .\dovi_tool info "$tmp_dir/DV8.RPU.bin" -s | Select-Object -Skip 3 | ForEach-Object {
-                    $key, $value = $_ -split ":", 2 | ForEach-Object { $_.Trim() }
+                $info_enumerator = (& .\dovi_tool info "$tmp_dir/DV8.RPU.bin" -s | Select-Object -Skip 3).GetEnumerator()
+                while ($info_enumerator.MoveNext()) {
+                    if ($info_enumerator.Current.Trim() -eq "L6 metadata") {
+                        # handle variable L6 metadata
+                        $l6_values = @()
+                        while ($info_enumerator.MoveNext() -and $info_enumerator.Current.Trim() -like "Mastering display*") {
+                            $key, $value = $info_enumerator.Current -split ":", 2 | ForEach-Object { $_.Trim() }
+                            $l6_values += $value
+                        }
+                        $info["L6 metadata"] = $l6_values
+                    }
+                
+                    $key, $value = $info_enumerator.Current -split ":", 2 | ForEach-Object { $_.Trim() }
                     $info[$key] = $value
                 }
-
+                
                 $MasteringDisplay_Luminance = $info."RPU mastering display"
                 $MasteringDisplay_Luminance_matches = ($MasteringDisplay_Luminance | Select-String -Pattern "^(.+)\/(.+) nits$").Matches
-
+                
                 $L1_MaxCLL_MaxFALL = $info."RPU content light level (L1)"
                 $L1_MaxCLL_MaxFALL_matches = ($L1_MaxCLL_MaxFALL | Select-String -Pattern "^MaxCLL: (.+) nits, MaxFALL: (.+) nits$").Matches
-
-                $L6_MaxCLL_MaxFALL = $info."L6 metadata"
-                $L6_MaxCLL_MaxFALL_matches = ($L6_MaxCLL_MaxFALL | Select-String -Pattern "^.+ MaxCLL: (.+) nits, MaxFALL: (.+) nits$").Matches
-
+                
+                # TODO: save more data?
                 $RPU_data = [ordered]@{
                     Profile                        = $info.Profile
                     Content_Mapping_Version        = ($info."DM version" | Select-String -pattern "^.+ \(CM (.+)\)$").Matches.Groups[1].Value
+                    Shot_Count                     = $info."Scene/shot count"
                     MasteringDisplay_Luminance_Min = "$($MasteringDisplay_Luminance_matches.Groups[1].Value) nits"
                     MasteringDisplay_Luminance_Max = "$($MasteringDisplay_Luminance_matches.Groups[2].Value) nits"
                     L1_MaxCLL                      = "$($L1_MaxCLL_MaxFALL_matches.Groups[1].Value) nits"
                     L1_MaxFALL                     = "$($L1_MaxCLL_MaxFALL_matches.Groups[2].Value) nits"
-                    L6_MaxCLL                      = "$($L6_MaxCLL_MaxFALL_matches.Groups[1].Value) nits"
-                    L6_MaxFALL                     = "$($L6_MaxCLL_MaxFALL_matches.Groups[2].Value) nits"
+                }
+                
+                $L6_MaxCLL_MaxFALL = $info."L6 metadata"
+                $L6_MaxCLL_MaxFALL_matches = $L6_MaxCLL_MaxFALL | Select-String -Pattern "^.+ MaxCLL: (.+) nits, MaxFALL: (.+) nits$" | ForEach-Object { $_.Matches }     
+                if ($L6_MaxCLL_MaxFALL -is [array]) {
+                    # handle variable L6 metadata
+                    $RPU_data["L6"] = $L6_MaxCLL_MaxFALL_matches | ForEach-Object {
+                        [ordered]@{
+                            "L6_MaxCLL"  = "$($_.Groups[1].Value) nits"
+                            "L6_MaxFALL" = "$($_.Groups[2].Value) nits"
+                        }
+                    }
+                }
+                else {
+                    $RPU_data["L6_MaxCLL"] = "$($L6_MaxCLL_MaxFALL_matches.Groups[1].Value) nits"
+                    $RPU_data["L6_MaxFALL"] = "$($L6_MaxCLL_MaxFALL_matches.Groups[2].Value) nits"
                 }
             }
 
@@ -202,7 +235,7 @@ try {
         }
         finally {
             Get-Job | Stop-Job
-            Remove-Item $tmp_dir -Recurse
+            if ($tmp_dir) { Remove-Item $tmp_dir -Recurse }
         }
     }
 
