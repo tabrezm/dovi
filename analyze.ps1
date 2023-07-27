@@ -73,12 +73,23 @@ try {
             $process.Id = $id
             $process.Activity = $_.BaseName
 
-            $plot_png = (Join-Path $using:MetadataDir $_.BaseName) + ".plot.png"
             $master_json = (Join-Path $using:MetadataDir $_.BaseName) + ".master.json"
-            if (!$using:Force.IsPresent -and ((Test-Path $plot_png) -and (Test-Path $master_json))) {
-                Write-Host "[$id] Plot and mastering metadata exists. Skipping..."
-                $process.Completed = $true
-                return
+            $plot_png = (Join-Path $using:MetadataDir $_.BaseName) + ".plot.png"
+            if (!$using:Force.IsPresent) {
+                if (($_ -like "*DV*") -or ($_ -like "*DoVi*")) {
+                    if ((Test-Path $master_json) -and (Test-Path $plot_png)) {
+                        Write-Host "[$id] Mastering metadata and plot exists. Skipping..."
+                        $process.Completed = $true
+                        return
+                    }
+                }
+                else {
+                    if (Test-Path $master_json) {
+                        Write-Host "[$id] Mastering metadata exists. Skipping..."
+                        $process.Completed = $true
+                        return
+                    }
+                }
             }
 
             $tmp_dir = New-TemporaryDirectory -Path $using:TempDir
@@ -223,7 +234,7 @@ try {
                 Name = $_.Name
                 BL   = $BL_data
                 RPU  = $RPU_data
-            } | ConvertTo-Json
+            } | ConvertTo-Json -Depth 5
             $BL_RPU_data | Set-Content $master_json
 
             $process.Completed = $true
