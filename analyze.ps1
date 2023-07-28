@@ -92,11 +92,9 @@ try {
                 }
             }
 
-            $tmp_dir = New-TemporaryDirectory -Path $using:TempDir
-
             $process.Status = "(1/6) Load metadata from BL"
             $process.PercentComplete = -1
-            $info = & MediaInfo.exe $_ --Output=JSON | ConvertFrom-Json
+            $info = & MediaInfo.exe "\\?\$_" --Output=JSON | ConvertFrom-Json
             $video_track = $info.media.track[1]
 
             if ("HEVC" -ne $video_track.Format) {
@@ -129,6 +127,8 @@ try {
             # drop null values
             ($BL_data.GetEnumerator() | Where-Object { -not $_.Value }) | ForEach-Object { $BL_data.Remove($_.Name) }
 
+            $tmp_dir = New-TemporaryDirectory -Path $using:TempDir
+
             if ($BL_data.HDR_Format -like "Dolby Vision*") {
                 # limit sequential reads since multiple, parallel, sequential reads is effectively random reads
                 $semaphore = New-Object Threading.Semaphore(2, 2, "SmbReaderSemaphore")
@@ -137,7 +137,7 @@ try {
                     $semaphore.WaitOne()
                     $job = Start-ThreadJob -ScriptBlock {
                         param ($source, $out) & mkvextract.exe $source tracks 0:$out
-                    } -ArgumentList $_, "$tmp_dir/DV8.BL_RPU.hevc"
+                    } -ArgumentList "\\?\$_", "$tmp_dir/DV8.BL_RPU.hevc"
                     $pc_pattern = "^Progress: (\d+)%"
                     while (($job | Get-Job).State -in 'NotStarted', 'Running') {
                         $results = Receive-Job $job
@@ -172,13 +172,13 @@ try {
 
                 $process.Status = "(4/6) Generate plot from DV8 RPU"
                 $process.PercentComplete = -1
-                & .\dovi_tool plot "$tmp_dir/DV8.RPU.bin" -o $plot_png | Out-Null
+                & .\dovi_tool.exe plot "$tmp_dir/DV8.RPU.bin" -o $plot_png | Out-Null
 
                 $process.Status = "(5/6) Load mastering data from RPU"
                 $process.PercentComplete = -1
                 $info = [ordered]@{}
                 # ignore "Parsing RPU file...", newline, and "Summary:"
-                $info_enumerator = (& .\dovi_tool info "$tmp_dir/DV8.RPU.bin" -s | Select-Object -Skip 3).GetEnumerator()
+                $info_enumerator = (& .\dovi_tool.exe info "$tmp_dir/DV8.RPU.bin" -s | Select-Object -Skip 3).GetEnumerator()
                 while ($info_enumerator.MoveNext()) {
                     if ($info_enumerator.Current.Trim() -eq "L6 metadata") {
                         # handle variable L6 metadata
@@ -200,7 +200,6 @@ try {
                 $L1_MaxCLL_MaxFALL = $info."RPU content light level (L1)"
                 $L1_MaxCLL_MaxFALL_matches = ($L1_MaxCLL_MaxFALL | Select-String -Pattern "^MaxCLL: (.+) nits, MaxFALL: (.+) nits$").Matches
                 
-                # TODO: save more data?
                 $RPU_data = [ordered]@{
                     Profile                        = $info.Profile
                     Content_Mapping_Version        = ($info."DM version" | Select-String -pattern "^.+ \(CM (.+)\)$").Matches.Groups[1].Value
@@ -222,7 +221,7 @@ try {
                         }
                     }
                 }
-                else {
+                elseif ($L6_MaxCLL_MaxFALL) {
                     $RPU_data["L6_MaxCLL"] = "$($L6_MaxCLL_MaxFALL_matches.Groups[1].Value) nits"
                     $RPU_data["L6_MaxFALL"] = "$($L6_MaxCLL_MaxFALL_matches.Groups[2].Value) nits"
                 }
