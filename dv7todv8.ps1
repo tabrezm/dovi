@@ -1,4 +1,14 @@
 # Convert DV7 to DV8
+#
+#
+# Usage:
+#   gci -Path "Z:\Movies" -Filter "*.mkv" -Recurse | % { .\dv7todv8.ps1 $_ }
+
+param (
+    [string]$infile
+)
+
+$ErrorActionPreference = "Stop"
 
 function New-TemporaryDirectory {
     param (
@@ -14,27 +24,19 @@ function Robocopy {
         $Source,
         $Destination,
         $File,
-        [switch] $PassThru
+        [switch]$PassThru
     )
 
-    $job = Start-Job -ScriptBlock { & Robocopy.exe "$using:Source" "$using:Destination" "$using:File" /mt /njh /njs }
+    $job = Start-ThreadJob -ScriptBlock { & Robocopy.exe "$using:Source" "$using:Destination" "$using:File" /mt /njh /njs }
 
-    $prev_out, $curr_out
     $pc_pattern = "^\s+(\d+)%"
-    while (($job | Get-Job).HasMoreData -or ($job | Get-Job).State -eq "Running") {
-        $curr_out = Receive-Job $job
-        if (($null -eq $curr_out) -or ($prev_out -eq $curr_out)) {
-            continue
-        }
-        if ($curr_out -match $pc_pattern) {
-            $pc = ($curr_out | Select-String -Pattern $pc_pattern).Matches.Groups[1].Value
+    while (($job | Get-Job).State -in 'NotStarted', 'Running') {
+        $results = Receive-Job $job
+        if ($results -match $pc_pattern) {
+            $pc = ($results | Select-String -Pattern $pc_pattern).Matches.Groups[1].Value
             Write-Progress -Activity "Robocopy" -Status "$pc% complete" -PercentComplete $pc
         }
-        else {
-            Write-Host $curr_out
-        }
         Start-Sleep 1
-        $prev_out = $curr_out
     }
     Write-Progress -Activity "Robocopy" -Completed
 
@@ -43,9 +45,6 @@ function Robocopy {
     }
 }
 
-$ErrorActionPreference = "Stop"
-
-$infile = $args[0]
 if (!(Test-Path -Path $infile -PathType Leaf)) {
     throw "File does not exist."
 }
@@ -56,14 +55,18 @@ $basename = (Get-Item $infile).BaseName
 
 Write-Host "=== Processing file: '$filename' ==="
 
-$dv_profile = (ffprobe -v quiet -show_streams -select_streams v:0 $infile |
-    Select-String -Pattern "dv_profile=(\d)").Matches.Groups[1].Value
-if ($dv_profile -eq 8) {
-    Write-Host "Already DV profile 8. Fin."
+$info = & MediaInfo.exe "\\?\$infile" --Output=JSON | ConvertFrom-Json
+$hdr_format_profile = $info.media.track[1].HDR_Format_Profile
+if (!$hdr_format_profile) {
+    Write-Host "Not a DV file."
     exit
 }
-elseif ($dv_profile -ne 7) {
-    throw "Unexpected DV profile. Expected: 7. Found: $dv_profile."
+elseif ($hdr_format_profile -like "dvhe.08*") {
+    Write-Host "Already a DV8 file."
+    exit
+}
+elseif (!$hdr_format_profile -like "dvhe.07*") {
+    Write-Error "Unexpected DV profile. Expected: 'dvhe.07'. Found: '$hdr_format_profile'."
 }
 
 try {
@@ -78,13 +81,13 @@ try {
     Write-Host "=== Extract DV7 RPU ==="
     .\dovi_tool.exe extract-rpu "$tmp_dir/DV7.BL_EL_RPU.hevc" -o "$tmp_dir/DV7.RPU.bin"
 
-    # Preserve FEL in case of future support for encoding it into BL or RPU
+    # Preserve FEL in case of future support for encoding it into BL
     $el_type = "MEL"
     if ((.\dovi_tool.exe info "$tmp_dir/DV7.RPU.bin" -s |
             Select-String -Pattern "Profile: 7 \((\w+)\)").Matches.Groups[1].Value -eq "FEL") {
         $el_type = "FEL"
 
-        Write-Host "=== Extract DV7 FEL==="
+        Write-Host "=== Extract DV7 FEL ==="
         $outfile_el = (Join-Path $original_dir $basename) + ".FEL.hevc"
         .\dovi_tool.exe demux --el-only "$tmp_dir/DV7.BL_EL_RPU.hevc" --el-out $outfile_el
     }
@@ -108,7 +111,7 @@ try {
 }
 finally {
     Get-Job | Stop-Job
-    Remove-Item $tmp_dir -Recurse
+    if ($tmp_dir) { Remove-Item $tmp_dir -Recurse }
 }
 
-Write-Host "Fin."
+Write-Host "=== Fin. ==="

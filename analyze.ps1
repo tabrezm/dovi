@@ -5,9 +5,9 @@
 #   $ gci -Path "Z:\Movies" -Filter "*.mkv" -Recurse | .\analyze.ps1 -MetadataDir Z:\Movies\metadata
 
 param (
-    [String[]]$RootDir,
-    [String]$MetadataDir,
-    [String]$TempDir,
+    [string[]]$RootDir,
+    [string]$MetadataDir,
+    [string]$TempDir,
     [switch]$Force
 )
 
