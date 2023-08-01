@@ -1,11 +1,14 @@
 # Create parent dirs for standalone MKV files
 #
 # Usage:
-#   gci -Path "Z:\Movies" -Filter "*.mkv" -Recurse | % { .\preprocess.ps1 $_ }
+#   gci -Path "Z:\Movies" -Filter "*.mkv" | % { .\preprocess.ps1 $_ }
+
+param (
+    [string]$infile
+)
 
 $ErrorActionPreference = "Stop"
 
-$infile = $args[0]
 if (!(Test-Path -Path $infile)) {
     throw "Path does not exist."
 }

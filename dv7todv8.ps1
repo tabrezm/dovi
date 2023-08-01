@@ -76,24 +76,22 @@ try {
     $infile_tmp = Robocopy $original_dir $tmp_dir $filename -PassThru
 
     Write-Host "=== Extract DV7 BL+EL+RPU ==="
-    mkvextract $infile_tmp tracks 0:"$tmp_dir/DV7.BL_EL_RPU.hevc"
+    & mkvextract.exe $infile_tmp tracks 0:"$tmp_dir/DV7.BL_EL_RPU.hevc"
 
     Write-Host "=== Extract DV7 RPU ==="
-    .\dovi_tool.exe extract-rpu "$tmp_dir/DV7.BL_EL_RPU.hevc" -o "$tmp_dir/DV7.RPU.bin"
+    & .\dovi_tool.exe extract-rpu "$tmp_dir/DV7.BL_EL_RPU.hevc" -o "$tmp_dir/DV7.RPU.bin"
 
     # Preserve FEL in case of future support for encoding it into BL
     $el_type = "MEL"
-    if ((.\dovi_tool.exe info "$tmp_dir/DV7.RPU.bin" -s |
-            Select-String -Pattern "Profile: 7 \((\w+)\)").Matches.Groups[1].Value -eq "FEL") {
-        $el_type = "FEL"
-
+    if ((& .\dovi_tool.exe info "$tmp_dir/DV7.RPU.bin" -s | Select-String -Pattern "Profile: 7 \((\w+)\)").Matches.Groups[1].Value -eq "FEL") {
         Write-Host "=== Extract DV7 FEL ==="
+        $el_type = "FEL"
         $outfile_el = (Join-Path $original_dir $basename) + ".FEL.hevc"
-        .\dovi_tool.exe demux --el-only "$tmp_dir/DV7.BL_EL_RPU.hevc" --el-out $outfile_el
+        & .\dovi_tool.exe demux --el-only "$tmp_dir/DV7.BL_EL_RPU.hevc" --el-out $outfile_el
     }
 
     Write-Host "=== Convert DV7 BL+EL+RPU to DV8 BL+RPU ==="
-    .\dovi_tool.exe -m 2 convert --discard "$tmp_dir/DV7.BL_EL_RPU.hevc" -o "$tmp_dir/DV8.BL_RPU.hevc"
+    & .\dovi_tool.exe -m 2 convert --discard "$tmp_dir/DV7.BL_EL_RPU.hevc" -o "$tmp_dir/DV8.BL_RPU.hevc"
 
     Write-Host "=== Merge DV8 BL+RPU ==="
     $outfile = (Join-Path $original_dir $basename) + ".DV8.mkv"
